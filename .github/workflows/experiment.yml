@@ -1,0 +1,69 @@
+name: experiment
+on: [push]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-16.04, ubuntu-18.04, ubuntu-20.04, windows-2019]
+    steps:
+
+    - name: checkout src
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 1
+        submodules: 'recursive'
+        path: src
+
+    - name: checkout db
+      uses: actions/checkout@v2
+      if: startsWith(github.repository_owner,'mangos')
+      with:
+        fetch-depth: 1
+        submodules: 'recursive'
+        repository: ${{ github.repository_owner }}/database
+        path: database
+
+    - name: update source deps
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        cd src/dep && git pull origin master && git checkout master
+
+    - name: add msbuild to PATH
+      if: runner.os == 'Windows'
+      uses: microsoft/setup-msbuild@v1.0.1
+
+    - name: install deps
+      shell: bash
+      run: |
+        if [ "${RUNNER_OS}" == "Linux" ]; then
+          export DEBIAN_FRONTEND=noninteractive
+          sudo apt-get -y install build-essential cmake pkg-config git
+        elif [ "${RUNNER_OS}" == "Windows" ]; then
+          choco install --no-progress openssl
+        else
+          echo "RUNNER_OS: ${RUNNER_OS} - Not known?"
+        fi
+
+    - name: build
+      shell: bash
+      env:
+        B_CONFIG: "-DBUILD_TOOLS=1 -DBUILD_MANGOSD=1 -DSOAP=1 -DBUILD_REALMD=1 -DPLAYERBOTS=0"
+      run: |
+        test -d _build || mkdir _build
+        test -d _install || mkdir _install
+        cd _build
+        if [ "${RUNNER_OS}" == "Linux" ]; then
+          cmake ../src -DCMAKE_INSTALL_PREFIX=../_install ${B_CONFIG}
+          make -j $(nproc)
+          make install
+        elif [ "${RUNNER_OS}" == "Windows" ]; then
+          cmake ../src -G "Visual Studio 16 2019" -DCMAKE_INSTALL_PREFIX=../_install ${B_CONFIG}
+          MSBuild.exe "${GITHUB_WORKSPACE}\_build\INSTALL.vcxproj" //m //p:Configuration=Release //verbosity:normal
+        else
+          echo "RUNNER_OS: ${RUNNER_OS} - Not known?"
+        fi
+        find ${GITHUB_WORKSPACE}/_install
